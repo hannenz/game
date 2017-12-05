@@ -1,16 +1,38 @@
+;------------------------------------------------------
 ; On soft reset, we trigger a reload
 ; of the current file, so we can
 ; re-compile the code and then hitting CapsLock+PgUp 
 ; in VICE will reload (and re-run) the current file
-; 
-; .A/.X 		Callback address
 ;------------------------------------------------------
 .export init_reloader
 
+reloc 		= $cf80
+filename 	= $cff0
+fnlen 		= $cfef
+
+		.code
+
 init_reloader:
-	; On soft reset: reload current prg (for development)
-		sta callback
-		stx callback + 1
+		; On soft reset: reload current prg (for development)
+		
+		; relocate code 
+		ldy #0
+:		lda load,y
+		sta reloc,y
+		iny
+		cpy #load_end - load
+		bcc :-
+
+		; save filename and length
+		ldy #0
+:		lda ($bb),y
+		sta filename,y
+		iny
+		cpy $b7
+		bne :-
+		sty fnlen
+
+		; setup reset vector
 		sei
 		lda #$c3
 		sta $8004
@@ -31,51 +53,87 @@ init_reloader:
 		cli
 		rts
 
+
 ; Custom (soft-)reset routine
 reset:
-		; jsr $fd15 ; restore kernal vectors
-		jsr $e544
 
-		ldy #0
-:		lda message,y
-		beq :+
-		jsr $ffd2
-		iny
-		jmp :-
-
-:		ldy #0
-:		lda ($bb),y
-		beq get
-		jsr $ffd2
-		iny
-		cpy $b7
-		bcc :-
-
-get: 	
-		jsr $ffe4
-		beq get
-
-		jsr reload
-		pla
+		; ----------
+		; System init as mentioned at [http://codebase64.org/doku.php?id=base:kernalbasicinit]
+		sei
+		cld
+		ldx #$ff
+		txs
+		jsr $ff84
+		lda #0
 		tay
-		pla
-		tax
-		pla
-		rti
+:		sta $0002,y
+		sta $0200,y
+		sta $0300,y
+		iny
+		bne :-
 
-reload:
+		ldx #$00
+		ldy #$a0
+		jsr $fd8c
+		jsr $ff8a
+		jsr $ff81
+		cli
+;
+		jsr $e453
+		jsr $e3bf
+		jsr $e422
+		ldx #$fb
+		txs
+		; ----------
+;
+		;; Print message to screen (why ?)
+		;jsr $e544
+;
+		;; set cursor
+		;clc
+		;ldx #11
+		;ldy #3
+		;jsr $fff0
+;
+		;; Switch to lowercase
+		;lda #23
+		;sta 53272
+;
+		;; print message
+		;ldy #0
+;:		lda message,y
+		;beq :+
+		;jsr $ffd2
+		;iny
+		;jmp :-
+;
+		;; print filename
+;:		tay
+;:		lda filename,y
+		;jsr $ffd2
+		;iny
+		;cpy fnlen
+		;bcc :-
+;
+;get:
+		;jsr $ffe4
+		;beq get
+		;inc $d020
+		jmp reloc
+
 		; we want to re-load the file
 		; that has initially been loaded
 		; so the filename is still stored at ($bd)
 		; no need to call SETNAME again
 		; and we don't need to bother about the file's name
-		; lda #8
-		; ldx #<filename
-		; ldy #>filename
-		; jsr $ffbd
+load:
+		lda fnlen
+		ldx #<filename
+		ldy #>filename
+		jsr $ffbd
 		lda #1
 		ldx #8
-		ldy #1
+		tay
 		jsr $ffba
 		lda #0
 		jsr $ffd5
@@ -86,7 +144,10 @@ reload:
 		sta $d020
 
 exit:
-		jmp (callback)
+		; BASIC init & run
+		jsr $a659
+		jsr $a533
+		jmp $a7ae
+load_end:
 
-callback: 	.word 0
-message: 	.asciiz "Hit any key to reload and restart current prg: "
+;message: 	.byte "Hit any key to reload and restart", 13, "   current prg: ",0
